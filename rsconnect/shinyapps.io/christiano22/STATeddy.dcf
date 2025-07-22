@@ -1,0 +1,13 @@
+name: STATeddy
+title: STATeddy
+username: christiano22
+account: christiano22
+server: shinyapps.io
+hostUrl: https://api.shinyapps.io/v1
+appId: 15108684
+bundleId: 10655422
+url: https://christiano22.shinyapps.io/STATeddy/
+version: 1
+asMultiple: FALSE
+asStatic: FALSE
+ignoredFiles: Komstat-tahapan analisis data [paparan].pdf
