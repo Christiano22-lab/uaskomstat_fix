@@ -97,8 +97,8 @@ generate_real_indonesia_coordinates <- function(district_codes = NULL) {
     options(timeout = 10)
     
     # Load data dengan error handling yang lebih baik
-    village_data <- read.csv(village_url, stringsAsFactors = FALSE, timeout = 10)
-    kab_data <- read.csv(kab_url, stringsAsFactors = FALSE, timeout = 10)
+    village_data <- read.csv(village_url, stringsAsFactors = FALSE)
+    kab_data <- read.csv(kab_url, stringsAsFactors = FALSE)
     
     # Bersihkan nama kabupaten untuk matching
     village_data$district_clean <- toupper(gsub("KABUPATEN |KOTA ", "", village_data$district))
