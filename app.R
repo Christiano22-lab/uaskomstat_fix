@@ -1307,7 +1307,7 @@ ui <- dashboardPage(
                         
                         br(),
                         div(style = "text-align: center;",
-                            actionButton("start_analysis", "Mulai Analisis", class = "btn-primary btn-lg"),
+                            actionButton("start_analysis", "Mulai Analisis", class = "btn-primary btn-lg")
                         ),
                         
                         br(), br(),
