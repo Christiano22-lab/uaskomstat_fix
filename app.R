@@ -38,6 +38,7 @@ library(cluster)  # For silhouette analysis
 library(dbscan)   # For DBSCAN clustering
 library(factoextra) # For clustering visualization
 library(fpc)      # For clustering validation
+library(jsonlite) # For JSON parsing
 
 # Global variables
 sovi_url <- "https://raw.githubusercontent.com/bmlmcmc/naspaclust/main/data/sovi_data.csv"
@@ -92,9 +93,12 @@ generate_real_indonesia_coordinates <- function(district_codes = NULL) {
     village_url <- "https://raw.githubusercontent.com/coll-j/indonesia-locations-data/main/Village_LongLat_Approx.csv"
     kab_url <- "https://raw.githubusercontent.com/coll-j/indonesia-locations-data/main/kota_kab.csv"
     
-    # Load data
-    village_data <- read.csv(village_url, stringsAsFactors = FALSE)
-    kab_data <- read.csv(kab_url, stringsAsFactors = FALSE)
+    # Set timeout untuk download
+    options(timeout = 10)
+    
+    # Load data dengan error handling yang lebih baik
+    village_data <- read.csv(village_url, stringsAsFactors = FALSE, timeout = 10)
+    kab_data <- read.csv(kab_url, stringsAsFactors = FALSE, timeout = 10)
     
     # Bersihkan nama kabupaten untuk matching
     village_data$district_clean <- toupper(gsub("KABUPATEN |KOTA ", "", village_data$district))
@@ -186,7 +190,10 @@ generate_real_indonesia_coordinates <- function(district_codes = NULL) {
     
   }, error = function(e) {
     # Error handling - jika download gagal, gunakan fallback
-    cat("Error downloading coordinates from GitHub, using fallback method:", e$message, "\n")
+    cat("⚠️ Error downloading coordinates from GitHub, using fallback method:", e$message, "\n")
+    
+    # Reset timeout options
+    options(timeout = 60)
     
     # Fallback ke sistem lama dengan batas provinsi
     if (!is.null(district_codes) && length(district_codes) > 0) {
@@ -5212,6 +5219,13 @@ Pastikan variabel yang dipilih adalah numerik.")
     cat("Clustering berhasil:", cluster_method, "- Cluster yang terbentuk:", actual_clusters, 
         "- Diharapkan:", expected_clusters, "\n")
     
+    # Notify user about clustering success
+    showNotification(
+      paste("Clustering berhasil!", cluster_method, "menghasilkan", actual_clusters, "cluster"),
+      type = "success",
+      duration = 3
+    )
+    
     # PASTIKAN SELALU MENGGUNAKAN KOORDINAT RIIL DISTRICTCODE
     if (nrow(values$current_data) == nrow(sovi_data)) {
       # Gunakan koordinat riil dari SOVI data yang sudah memiliki koordinat DISTRICTCODE
@@ -5313,7 +5327,7 @@ Pastikan variabel yang dipilih adalah numerik.")
       if (is.null(data) || is.null(clustering) || !"Cluster" %in% names(data)) {
         return(leaflet() %>% 
                  addTiles() %>% 
-                 setView(lng = 0, lat = 0, zoom = 2) %>%
+                 setView(lng = 118, lat = -2, zoom = 5) %>%
                  addControl(
                    html = "<div style='background: #ffecb3; padding: 10px; border-radius: 5px; border-left: 4px solid #ff9800;'>
                          <strong>⚠️ Belum Ada Clustering</strong><br>
@@ -5322,6 +5336,8 @@ Pastikan variabel yang dipilih adalah numerik.")
                    position = "topright"
                  ))
       }
+      
+      cat("📊 Rendering cluster map with", nrow(data), "points and", length(unique(data$Cluster)), "clusters\n")
       
       # Pastikan ada data untuk di-plot
       if (nrow(data) == 0) {
@@ -5370,6 +5386,20 @@ Pastikan variabel yang dipilih adalah numerik.")
       lng_coords <- pmax(94, pmin(142, lng_coords))    # Indonesia longitude bounds
       lat_coords <- pmax(-11, pmin(6, lat_coords))     # Indonesia latitude bounds
       
+      # Additional validation - replace any remaining invalid coordinates
+      invalid_lng <- is.na(lng_coords) | lng_coords < 94 | lng_coords > 142
+      invalid_lat <- is.na(lat_coords) | lat_coords < -11 | lat_coords > 6
+      
+      if (any(invalid_lng)) {
+        lng_coords[invalid_lng] <- runif(sum(invalid_lng), 95, 141)
+        cat("⚠️ Fixed", sum(invalid_lng), "invalid longitude coordinates\n")
+      }
+      
+      if (any(invalid_lat)) {
+        lat_coords[invalid_lat] <- runif(sum(invalid_lat), -8, 5)
+        cat("⚠️ Fixed", sum(invalid_lat), "invalid latitude coordinates\n")
+      }
+      
       # Buat color palette untuk clusters
       n_clusters <- length(unique(data$Cluster))
       cluster_colors <- c("#FF6B6B", "#4ECDC4", "#45B7D1", "#96CEB4", "#FECA57", 
@@ -5388,10 +5418,14 @@ Pastikan variabel yang dipilih adalah numerik.")
         # URL GeoJSON kabupaten Indonesia
         geojson_url <- "https://raw.githubusercontent.com/rizkitirta/GEO-JSON-INDONESIAN-REGION/main/IDN_adm_2_kabkota.json"
         
-        # Download GeoJSON (dengan timeout singkat untuk tidak mengganggu performa)
-        geojson_raw <- url(geojson_url)
+        # Download GeoJSON dengan timeout dan error handling yang lebih baik
+        geojson_raw <- url(geojson_url, open = "r")
+        on.exit(try(close(geojson_raw), silent = TRUE), add = TRUE)
+        
+        # Set timeout untuk koneksi
+        options(timeout = 10)  # 10 detik timeout
+        
         geojson_data <- jsonlite::fromJSON(geojson_raw, simplifyVector = FALSE)
-        close(geojson_raw)
         
         # Tambahkan polygon GeoJSON untuk setiap kabupaten dengan cluster
         features <- geojson_data$features
@@ -5450,8 +5484,17 @@ Pastikan variabel yang dipilih adalah numerik.")
         
         cat("✅ GeoJSON loaded successfully - showing accurate kabupaten boundaries!\n")
         
+        # Return map with polygons
+        return(map)
+        
       }, error = function(e) {
         cat("⚠️ GeoJSON loading failed, using fallback scatter plot:", e$message, "\n")
+        
+        # Reset timeout options
+        options(timeout = 60)
+        
+        # Add notification about fallback mode
+        cat("🔄 Using fallback scatter plot mode for", nrow(data), "points with", n_clusters, "clusters\n")
         
         # FALLBACK: Plot titik untuk setiap cluster dengan info yang lebih detail
         for (i in 1:n_clusters) {
