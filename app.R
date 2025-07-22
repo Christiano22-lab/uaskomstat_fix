@@ -1307,7 +1307,7 @@ ui <- dashboardPage(
                         
                         br(),
                         div(style = "text-align: center;",
-                            actionButton("start_analysis", "Mulai Analisis", class = "btn-primary btn-lg"),
+                            actionButton("start_analysis", "Mulai Analisis", class = "btn-primary btn-lg")
                         ),
                         
                         br(), br(),
@@ -5355,7 +5355,6 @@ Pastikan variabel yang dipilih adalah numerik.")
            xlab = "MDS Dimension 1", ylab = "MDS Dimension 2")
       legend("topright", legend = paste("Cluster", 1:3), 
              col = rainbow(3), pch = 16)
-    }
     }
   })
   
