@@ -5454,28 +5454,46 @@ Pastikan variabel yang dipilih adalah numerik.")
           fill_color <- cluster_colors[cluster_match]
           
           # Tambahkan polygon ke peta
-          if (feature$geometry$type == "Polygon") {
-            coords <- feature$geometry$coordinates[[1]]
-            lng_coords <- sapply(coords, function(x) x[1])
-            lat_coords <- sapply(coords, function(x) x[2])
-            
-            map <- map %>% addPolygons(
-              lng = lng_coords,
-              lat = lat_coords,
-              fillColor = fill_color,
-              fillOpacity = 0.6,
-              color = fill_color,
-              weight = 2,
-              opacity = 0.8,
-              popup = paste0(
-                "<div style='min-width: 200px;'>",
-                "<strong style='color: ", fill_color, "; font-size: 16px;'>", kabupaten_name, "</strong><br>",
-                "<strong>Cluster: ", cluster_match, "</strong><br>",
-                "<hr><small><em>Visualisasi GeoJSON polygon akurat</em></small>",
-                "</div>"
-              ),
-              group = paste("Cluster", cluster_match)
-            )
+          if (feature$geometry$type == "Polygon" || feature$geometry$type == "MultiPolygon") {
+            tryCatch({
+              # Handle both Polygon and MultiPolygon
+              if (feature$geometry$type == "Polygon") {
+                coords <- feature$geometry$coordinates[[1]]
+              } else if (feature$geometry$type == "MultiPolygon") {
+                coords <- feature$geometry$coordinates[[1]][[1]]
+              }
+              
+              # Extract dan konversi koordinat ke numeric
+              lng_coords <- as.numeric(sapply(coords, function(x) x[1]))
+              lat_coords <- as.numeric(sapply(coords, function(x) x[2]))
+              
+              # Validasi koordinat - harus numeric dan dalam batas Indonesia
+              if (all(!is.na(lng_coords)) && all(!is.na(lat_coords)) && 
+                  all(lng_coords >= 94 & lng_coords <= 142) && 
+                  all(lat_coords >= -11 & lat_coords <= 6)) {
+                
+                map <- map %>% addPolygons(
+                  lng = lng_coords,
+                  lat = lat_coords,
+                  fillColor = fill_color,
+                  fillOpacity = 0.6,
+                  color = fill_color,
+                  weight = 2,
+                  opacity = 0.8,
+                  popup = paste0(
+                    "<div style='min-width: 200px;'>",
+                    "<strong style='color: ", fill_color, "; font-size: 16px;'>", kabupaten_name, "</strong><br>",
+                    "<strong>Cluster: ", cluster_match, "</strong><br>",
+                    "<hr><small><em>Visualisasi GeoJSON polygon akurat</em></small>",
+                    "</div>"
+                  ),
+                  group = paste("Cluster", cluster_match)
+                )
+              }
+            }, error = function(e) {
+              # Skip polygon jika ada error dalam koordinat
+              cat("⚠️ Skipping polygon", kabupaten_name, "- coordinate error:", e$message, "\n")
+            })
           }
         }
         
