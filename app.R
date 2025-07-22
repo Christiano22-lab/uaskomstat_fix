@@ -2878,22 +2878,22 @@ ui <- dashboardPage(
 
 # Server
 server <- function(input, output, session) {
-  # Inisialisasi saat server start
+  # Reactive values - HARUS DIDEFINISIKAN PERTAMA
+  values <- reactiveValues(
+    current_data = sovi_data,  # Initialize with sovi_data directly
+    transformed_data = NULL,
+    clustering_result = clustering_result,  # Initialize with default clustering
+    cluster_assignment = cluster_assignment,  # Initialize with default cluster assignment
+    silhouette = clustering_result$silhouette
+  )
+  
+  # Inisialisasi saat server start - SETELAH values didefinisikan
   observe({
     # Pastikan data default ter-load dengan cluster assignment yang benar
-    if (is.null(values$current_data)) {
-      values$current_data <- sovi_data
-      values$current_data$Cluster <- as.factor(cluster_assignment)
-      values$clustering_result <- clustering_result
-      values$silhouette <- clustering_result$silhouette
+    if (is.null(values$current_data$Cluster)) {
+      values$current_data$Cluster <- as.factor(values$cluster_assignment)
     }
   })
-  
-  # Reactive values
-  values <- reactiveValues(
-    current_data = original_data,
-    transformed_data = NULL
-  )
   
   # Dynamic UI untuk custom breaks
   output$custom_breaks_ui <- renderUI({
@@ -5197,13 +5197,36 @@ Pastikan variabel yang dipilih adalah numerik.")
     values$cluster_assignment <- as.factor(clustering$cluster)
     values$clustering_result <- clustering
     
-    # Update atau inisialisasi current_data
-    if (is.null(values$current_data)) {
+    # Pastikan current_data ada dan ter-update dengan koordinat yang benar
+    if (is.null(values$current_data) || nrow(values$current_data) == 0) {
       values$current_data <- sovi_data
     }
     
     # Update cluster assignment dengan jumlah yang sesuai
     values$current_data$Cluster <- values$cluster_assignment
+    
+    # PASTIKAN KOORDINAT SELALU TERSEDIA DAN AKURAT
+    if (!"Latitude" %in% names(values$current_data) || !"Longitude" %in% names(values$current_data) ||
+        any(is.na(values$current_data$Latitude)) || any(is.na(values$current_data$Longitude))) {
+      
+      # Regenerate koordinat riil Indonesia
+      if ("DISTRICTCODE" %in% names(values$current_data)) {
+        coords_data <- generate_real_indonesia_coordinates(values$current_data$DISTRICTCODE)
+        values$current_data <- merge(values$current_data, coords_data, by = "DISTRICTCODE", all.x = TRUE, suffixes = c("", "_new"))
+        
+        # Update koordinat dengan yang baru jika ada
+        if ("Latitude_new" %in% names(values$current_data)) {
+          values$current_data$Latitude <- ifelse(is.na(values$current_data$Latitude), 
+                                                 values$current_data$Latitude_new, 
+                                                 values$current_data$Latitude)
+          values$current_data$Longitude <- ifelse(is.na(values$current_data$Longitude), 
+                                                  values$current_data$Longitude_new, 
+                                                  values$current_data$Longitude)
+          values$current_data$Latitude_new <- NULL
+          values$current_data$Longitude_new <- NULL
+        }
+      }
+    }
     
     # Debugging: pastikan jumlah cluster sesuai
     actual_clusters <- length(unique(values$cluster_assignment))
@@ -5248,24 +5271,43 @@ Pastikan variabel yang dipilih adalah numerik.")
   })
   
   output$dendrogram_plot <- renderPlot({
-    if (!is.null(values$clustering_result) && values$clustering_result$method == "hierarchical") {
-      hc <- values$clustering_result$hc
-      k <- as.numeric(input$n_cluster)
+    clustering <- values$clustering_result
+    
+    # Use current clustering result or default
+    if (is.null(clustering)) {
+      clustering <- clustering_result  # Use default clustering
+    }
+    
+    if (!is.null(clustering) && clustering$method == "hierarchical" && !is.null(clustering$hc)) {
+      hc <- clustering$hc
+      k <- ifelse(is.null(input$n_cluster), 3, as.numeric(input$n_cluster))
       plot(hc, main = paste("Dendrogram -", k, "Cluster"), 
            xlab = "Observasi", ylab = "Jarak", sub = "", cex = 0.7)
       rect.hclust(hc, k = k, border = rainbow(k))
     } else if (!is.null(clustering_result$hc)) {
+      # Default dendrogram
       hc <- clustering_result$hc
       k <- 3
       plot(hc, main = paste("Dendrogram -", k, "Cluster (Default)"), 
            xlab = "Observasi", ylab = "Jarak", sub = "", cex = 0.7)
       rect.hclust(hc, k = k, border = rainbow(k))
+    } else {
+      # Fallback message
+      plot(1, type = "n", axes = FALSE, xlab = "", ylab = "")
+      text(1, 1, "Dendrogram not available\nfor non-hierarchical clustering", 
+           cex = 1.2, col = "gray50")
     }
   })
   
   output$cluster_scatter_plot <- renderPlot({
-    if (!is.null(values$clustering_result) && values$clustering_result$method != "hierarchical") {
-      clustering <- values$clustering_result
+    clustering <- values$clustering_result
+    
+    # Use current clustering result or default
+    if (is.null(clustering)) {
+      clustering <- clustering_result  # Use default clustering
+    }
+    
+    if (!is.null(clustering) && clustering$method != "hierarchical") {
       
       if (clustering$method == "pam") {
         # Untuk PAM, gunakan MDS untuk visualisasi
@@ -5298,6 +5340,22 @@ Pastikan variabel yang dipilih adalah numerik.")
         legend("topright", legend = paste("Cluster", 1:max(clustering$cluster)), 
                col = rainbow(max(clustering$cluster)), pch = 16)
       }
+    } else {
+      # Default scatter plot using default clustering
+      dist_mat <- as.matrix(distance_matrix)
+      if (ncol(dist_mat) > nrow(dist_mat)) {
+        dist_mat <- dist_mat[, -1]
+      }
+      mds_result <- cmdscale(as.dist(dist_mat), k = 2)
+      mds_result[,2] <- -mds_result[,2]
+      
+      plot(mds_result, col = rainbow(3)[cluster_assignment], 
+           pch = 16, cex = 1.2,
+           main = "Default Clustering - 3 Clusters (MDS Visualization)",
+           xlab = "MDS Dimension 1", ylab = "MDS Dimension 2")
+      legend("topright", legend = paste("Cluster", 1:3), 
+             col = rainbow(3), pch = 16)
+    }
     }
   })
   
@@ -5309,18 +5367,17 @@ Pastikan variabel yang dipilih adalah numerik.")
       data <- values$current_data
       clustering <- values$clustering_result
       
-      # Jika tidak ada clustering aktif, jangan tampilkan peta
-      if (is.null(data) || is.null(clustering) || !"Cluster" %in% names(data)) {
-        return(leaflet() %>% 
-                 addTiles() %>% 
-                 setView(lng = 0, lat = 0, zoom = 2) %>%
-                 addControl(
-                   html = "<div style='background: #ffecb3; padding: 10px; border-radius: 5px; border-left: 4px solid #ff9800;'>
-                         <strong>⚠️ Belum Ada Clustering</strong><br>
-                         Silakan jalankan clustering terlebih dahulu untuk melihat visualisasi peta.
-                         </div>",
-                   position = "topright"
-                 ))
+      # Jika tidak ada clustering aktif, gunakan default clustering
+      if (is.null(data) || nrow(data) == 0) {
+        data <- sovi_data
+        data$Cluster <- as.factor(cluster_assignment)
+        cat("Using default SOVI data with default clustering\n")
+      }
+      
+      # Pastikan kolom Cluster ada
+      if (!"Cluster" %in% names(data)) {
+        data$Cluster <- as.factor(cluster_assignment[1:nrow(data)])
+        cat("Added default Cluster column\n")
       }
       
       # Pastikan ada data untuk di-plot
@@ -5337,10 +5394,18 @@ Pastikan variabel yang dipilih adalah numerik.")
       if (!"Latitude" %in% names(data) || !"Longitude" %in% names(data) || 
           any(is.na(data$Latitude)) || any(is.na(data$Longitude))) {
         
+        cat("Generating coordinates for clustering map...\n")
+        
         # Generate koordinat riil Indonesia berdasarkan DISTRICTCODE
         if ("DISTRICTCODE" %in% names(data) && !any(is.na(data$DISTRICTCODE))) {
           coords_data <- generate_real_indonesia_coordinates(data$DISTRICTCODE)
-          data <- merge(data, coords_data, by = "DISTRICTCODE", all.x = TRUE)
+          # Merge dengan handling duplikat
+          data <- merge(data, coords_data, by = "DISTRICTCODE", all.x = TRUE, suffixes = c("_old", ""))
+          
+          # Remove old coordinate columns if they exist
+          if ("Latitude_old" %in% names(data)) data$Latitude_old <- NULL
+          if ("Longitude_old" %in% names(data)) data$Longitude_old <- NULL
+          
         } else {
           # Fallback: gunakan sequential DISTRICTCODE untuk koordinat riil Indonesia
           sequential_codes <- 1101:(1100 + n_data)
@@ -5360,6 +5425,8 @@ Pastikan variabel yang dipilih adalah numerik.")
             data$Longitude[i] <- fallback_coords$Longitude[1]
           }
         }
+        
+        cat("Coordinates generated successfully for", nrow(data), "points\n")
       }
       
       # Gunakan koordinat riil Indonesia
@@ -5372,11 +5439,16 @@ Pastikan variabel yang dipilih adalah numerik.")
       
       # Buat color palette untuk clusters
       n_clusters <- length(unique(data$Cluster))
+      cat("Number of clusters:", n_clusters, "| Unique clusters:", paste(unique(data$Cluster), collapse = ", "), "\n")
+      
       cluster_colors <- c("#FF6B6B", "#4ECDC4", "#45B7D1", "#96CEB4", "#FECA57", 
                           "#FF9FF3", "#54A0FF", "#5F27CD", "#00D2D3", "#FF9F43")[1:n_clusters]
       if (n_clusters > 10) {
         cluster_colors <- rainbow(n_clusters)
       }
+      
+      cat("Data ready for mapping: rows =", nrow(data), "| has coordinates =", 
+          all(c("Latitude", "Longitude") %in% names(data)), "\n")
       
       # Buat peta dasar dengan view yang sesuai untuk Indonesia
       map <- leaflet() %>%
@@ -5452,6 +5524,9 @@ Pastikan variabel yang dipilih adalah numerik.")
         
       }, error = function(e) {
         cat("⚠️ GeoJSON loading failed, using fallback scatter plot:", e$message, "\n")
+        
+        # ALWAYS ADD SCATTER PLOT POINTS as backup visualization
+        cat("Adding fallback scatter plot points...\n")
         
         # FALLBACK: Plot titik untuk setiap cluster dengan info yang lebih detail
         for (i in 1:n_clusters) {
@@ -5536,6 +5611,41 @@ Pastikan variabel yang dipilih adalah numerik.")
         }
         
       }) # End of tryCatch for GeoJSON
+      
+      # ALWAYS ADD SCATTER PLOT POINTS for clustering visualization
+      cat("Adding primary scatter plot visualization...\n")
+      for (i in 1:n_clusters) {
+        cluster_idx <- which(data$Cluster == i)
+        if (length(cluster_idx) > 0) {
+          map <- map %>%
+            addCircleMarkers(
+              lng = lng_coords[cluster_idx],
+              lat = lat_coords[cluster_idx],
+              color = "white",
+              fillColor = cluster_colors[i],
+              weight = 2,
+              radius = 8,
+              fillOpacity = 0.8,
+              stroke = TRUE,
+              popup = paste0(
+                "<div style='min-width: 200px;'>",
+                "<strong style='color: ", cluster_colors[i], "; font-size: 16px;'>Cluster ", i, "</strong><br>",
+                "<strong>Point #", cluster_idx, "</strong><br>",
+                "<strong>Coordinates:</strong> ", round(lat_coords[cluster_idx], 4), ", ", round(lng_coords[cluster_idx], 4), "<br>",
+                "<hr><small><em>Clustering visualization</em></small>",
+                "</div>"
+              ),
+              label = paste("Cluster", i),
+              group = paste("Cluster", i),
+              labelOptions = labelOptions(
+                style = list("font-weight" = "bold", padding = "3px 8px", "background-color" = "rgba(255,255,255,0.9)"),
+                textsize = "12px",
+                direction = "auto"
+              )
+            )
+        }
+      }
+      cat("Scatter plot points added successfully!\n")
       
       # Tambah legend yang lebih informatif dengan statistik
       legend_labels <- character(n_clusters)
