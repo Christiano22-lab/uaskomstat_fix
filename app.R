@@ -5222,7 +5222,7 @@ Pastikan variabel yang dipilih adalah numerik.")
     # Notify user about clustering success
     showNotification(
       paste("Clustering berhasil!", cluster_method, "menghasilkan", actual_clusters, "cluster"),
-      type = "success",
+      type = "message",
       duration = 3
     )
     
@@ -5418,14 +5418,11 @@ Pastikan variabel yang dipilih adalah numerik.")
         # URL GeoJSON kabupaten Indonesia
         geojson_url <- "https://raw.githubusercontent.com/rizkitirta/GEO-JSON-INDONESIAN-REGION/main/IDN_adm_2_kabkota.json"
         
-        # Download GeoJSON dengan timeout dan error handling yang lebih baik
-        geojson_raw <- url(geojson_url, open = "r")
-        on.exit(try(close(geojson_raw), silent = TRUE), add = TRUE)
-        
         # Set timeout untuk koneksi
         options(timeout = 10)  # 10 detik timeout
         
-        geojson_data <- jsonlite::fromJSON(geojson_raw, simplifyVector = FALSE)
+        # Download GeoJSON dengan method yang lebih robust
+        geojson_data <- jsonlite::fromJSON(geojson_url, simplifyVector = FALSE)
         
         # Tambahkan polygon GeoJSON untuk setiap kabupaten dengan cluster
         features <- geojson_data$features
