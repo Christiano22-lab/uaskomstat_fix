@@ -44,11 +44,34 @@ sovi_url <- "https://raw.githubusercontent.com/bmlmcmc/naspaclust/main/data/sovi
 distance_url <- "https://raw.githubusercontent.com/bmlmcmc/naspaclust/main/data/distance.csv"
 metadata_url <- "https://www.sciencedirect.com/science/article/pii/S2352340921010180"
 
-# Load data function
+# Load data function - Updated to prioritize shapefile data
 load_data <- function() {
+  # Coba gunakan data dari shapefile terlebih dahulu
+  shapefile_data <- load_shapefile_data()
+  
+  if (!is.null(shapefile_data)) {
+    # Jika shapefile berhasil dimuat, gunakan sebagai sumber data utama
+    tryCatch({
+      # Masih load distance matrix dari URL
+      distance_data <- read.csv(distance_url, stringsAsFactors = FALSE)
+      
+      # Gunakan data dari shapefile untuk SOVI
+      cat("Using shapefile data as primary SOVI data source\n")
+      return(list(sovi = shapefile_data, distance = distance_data))
+    }, error = function(e2) {
+      # Jika distance matrix gagal, buat yang dummy
+      n <- nrow(shapefile_data)
+      distance_sample <- matrix(runif(n*n), nrow = n)
+      cat("Using shapefile data with dummy distance matrix\n")
+      return(list(sovi = shapefile_data, distance = distance_sample))
+    })
+  }
+  
+  # Fallback ke sistem lama jika shapefile tidak tersedia
   tryCatch({
     sovi_data <- read.csv(sovi_url, stringsAsFactors = FALSE)
     distance_data <- read.csv(distance_url, stringsAsFactors = FALSE)
+    cat("Using online CSV data sources\n")
     list(sovi = sovi_data, distance = distance_data)
   }, error = function(e) {
     # Fallback: create sample data if URL fails
@@ -79,11 +102,93 @@ distance_matrix <- data_list$distance
 
 # CATATAN PENTING: Koordinat Latitude dan Longitude 
 # Dataset asli SOVI dan distance matrix TIDAK memiliki koordinat geografis riil
-# Koordinat yang ditampilkan menggunakan DATABASE KOORDINAT RIIL Indonesia
-# Berdasarkan mapping DISTRICTCODE ke koordinat kabupaten/kota Indonesia
+# Koordinat yang ditampilkan menggunakan SHAPEFILE INDONESIA RESMI
+# File: sovi_administrasi_kabupaten.shp dengan data geografis akurat
+
+# Fungsi untuk load data dari shapefile Indonesia
+load_shapefile_data <- function() {
+  tryCatch({
+    # Load shapefile menggunakan sf package
+    shapefile_data <- st_read("sovi_administrasi_kabupaten.shp", quiet = TRUE)
+    
+    # Convert ke data frame biasa dan ambil centroid untuk koordinat
+    shapefile_df <- st_drop_geometry(shapefile_data)
+    centroids <- st_centroid(shapefile_data$geometry)
+    coords <- st_coordinates(centroids)
+    
+    # Gabungkan data
+    shapefile_df$Longitude <- coords[, 1]
+    shapefile_df$Latitude <- coords[, 2]
+    
+    # Rename kolom untuk konsistensi dengan sistem yang ada
+    names(shapefile_df)[names(shapefile_df) == "DISTRICTCO"] <- "DISTRICTCODE"
+    
+    # Pastikan semua kolom numerik SOVI dalam format yang benar
+    numeric_cols <- c("CHILDREN", "FEMALE", "ELDERLY", "FHEAD", "FAMILYSIZE", 
+                     "NOELECTRIC", "LOWEDU", "GROWTH", "POVERTY", "ILLITERATE", 
+                     "NOTRAINING", "DPRONE", "RENTED", "NOSEWER", "TAPWATER", 
+                     "POPULATION", "DISTRICTCODE")
+    
+    for (col in numeric_cols) {
+      if (col %in% names(shapefile_df)) {
+        shapefile_df[[col]] <- as.numeric(shapefile_df[[col]])
+      }
+    }
+    
+    return(shapefile_df)
+    
+  }, error = function(e) {
+    cat("Error loading shapefile:", e$message, "\n")
+    return(NULL)
+  })
+}
 
 # Fungsi untuk generate koordinat riil Indonesia berdasarkan DISTRICTCODE
+# UPDATED: Sekarang menggunakan data dari shapefile sebagai prioritas utama
 generate_real_indonesia_coordinates <- function(district_codes = NULL) {
+  # Coba load data dari shapefile terlebih dahulu
+  shapefile_data <- load_shapefile_data()
+  
+  if (!is.null(shapefile_data)) {
+    # Jika shapefile berhasil dimuat, gunakan data dari sana
+    if (!is.null(district_codes) && length(district_codes) > 0) {
+      # Convert to numeric jika perlu
+      if (is.character(district_codes)) {
+        district_codes <- as.numeric(district_codes)
+      }
+      
+      # Buat dataframe hasil
+      result_coords <- data.frame(
+        DISTRICTCODE = district_codes,
+        Latitude = numeric(length(district_codes)),
+        Longitude = numeric(length(district_codes))
+      )
+      
+      # Match dengan data shapefile
+      for (i in 1:length(district_codes)) {
+        code <- district_codes[i]
+        match_idx <- which(shapefile_data$DISTRICTCODE == code)
+        
+        if (length(match_idx) > 0) {
+          # Gunakan koordinat dari shapefile
+          result_coords$Latitude[i] <- shapefile_data$Latitude[match_idx[1]]
+          result_coords$Longitude[i] <- shapefile_data$Longitude[match_idx[1]]
+        } else {
+          # Fallback ke koordinat acak dalam batas Indonesia
+          result_coords$Latitude[i] <- runif(1, -8.0, 5.0)     
+          result_coords$Longitude[i] <- runif(1, 95.0, 141.0)  
+        }
+      }
+      
+      return(result_coords)
+    } else {
+      # Return sample dari shapefile
+      sample_indices <- sample(min(6, nrow(shapefile_data)))
+      return(shapefile_data[sample_indices, c("DISTRICTCODE", "Latitude", "Longitude")])
+    }
+  }
+  
+  # Fallback ke sistem lama jika shapefile gagal dimuat
   # KOORDINAT AKURAT dari GitHub yang Anda berikan!
   # Menggunakan data agregasi dari Village_LongLat_Approx.csv untuk mendapatkan centroid kabupaten
   
@@ -1532,8 +1637,10 @@ ui <- dashboardPage(
                 box(width = 12, title = "Analisis Data SOVI Menggunakan Peta - Visualisasi Spasial", status = "info", solidHeader = TRUE,
                     div(class = "info-box",
                         p(strong("Tujuan Menu:"), "Menu ini digunakan untuk menganalisis data Social Vulnerability Index (SOVI) secara spasial menggunakan peta interaktif Indonesia."),
-                        p(strong("Fitur Utama:"), "Visualisasi SOVI score pada peta Indonesia, analisis distribusi spasial kerentanan sosial, filtering berdasarkan threshold, dan identifikasi hotspot kerentanan."),
-                        p(strong("Cara Penggunaan:"), "1) Pilih variabel SOVI untuk divisualisasikan, 2) Atur threshold dan filter, 3) Analisis distribusi spasial, 4) Identifikasi area dengan kerentanan tinggi/rendah.")
+                        p(strong("Fitur Utama:"), "Visualisasi SOVI score pada peta Indonesia menggunakan shapefile resmi, analisis distribusi spasial kerentanan sosial, filtering berdasarkan threshold, dan identifikasi hotspot kerentanan."),
+                        p(strong("Data Source:"), "Menggunakan shapefile 'sovi_administrasi_kabupaten.shp' untuk koordinat geografis akurat dan batas wilayah kabupaten/kota Indonesia."),
+                        p(strong("Cara Penggunaan:"), "1) Pilih variabel SOVI untuk divisualisasikan, 2) Atur threshold dan filter, 3) Analisis distribusi spasial, 4) Identifikasi area dengan kerentanan tinggi/rendah."),
+                        p(strong("Visualisasi:"), "Peta akan menampilkan polygon wilayah jika data cocok dengan shapefile, atau titik koordinat jika menggunakan data alternatif.")
                     )
                 )
               ),
@@ -6314,20 +6421,109 @@ Pastikan variabel yang dipilih adalah numerik.")
           popup_content[i] <- popup_info
         }
         
-        # Tambah markers ke peta
-        map <- map %>%
-          addCircleMarkers(
-            lng = data$Longitude,
-            lat = data$Latitude,
-            color = "white",
-            fillColor = colors,
-            weight = 1,
-            radius = 8,
-            fillOpacity = 0.8,
-            stroke = TRUE,
-            popup = popup_content,
-            label = paste(selected_var, ":", if(is_numeric) round(var_values, 2) else var_values)
-          )
+        # Cek apakah data berasal dari shapefile dan tambahkan ke peta
+        shapefile_data <- load_shapefile_data()
+        
+        if (!is.null(shapefile_data) && "DISTRICTCODE" %in% names(data) && 
+            length(intersect(data$DISTRICTCODE, shapefile_data$DISTRICTCODE)) > 0) {
+          
+          # Gunakan polygon dari shapefile
+          tryCatch({
+            # Load shapefile untuk polygon
+            shapefile_sf <- st_read("sovi_administrasi_kabupaten.shp", quiet = TRUE)
+            
+            # Match data dengan shapefile berdasarkan DISTRICTCODE
+            shapefile_sf$DISTRICTCODE <- as.numeric(shapefile_sf$DISTRICTCO)
+            data_matched <- merge(shapefile_sf, data, by = "DISTRICTCODE", all.x = FALSE, all.y = FALSE)
+            
+            if (nrow(data_matched) > 0) {
+              # Ambil variabel untuk pewarnaan dari data yang sudah di-merge
+              var_values_matched <- data_matched[[paste0(selected_var, ".y")]]
+              if (is.null(var_values_matched)) {
+                var_values_matched <- data_matched[[selected_var]]
+              }
+              
+              # Buat warna untuk polygon
+              if (input$sovi_map_type == "heatmap" && is_numeric) {
+                pal_poly <- colorNumeric(palette = "RdYlBu", domain = var_values_matched, reverse = TRUE)
+                colors_poly <- pal_poly(var_values_matched)
+              } else {
+                # Gunakan warna yang sama dengan yang sudah dibuat
+                colors_poly <- colors[match(data_matched$DISTRICTCODE, data$DISTRICTCODE)]
+              }
+              
+              # Tambah polygon ke peta
+              map <- map %>%
+                addPolygons(
+                  data = data_matched,
+                  fillColor = colors_poly,
+                  weight = 2,
+                  opacity = 1,
+                  color = "white",
+                  dashArray = "3",
+                  fillOpacity = 0.7,
+                  popup = popup_content[match(data_matched$DISTRICTCODE, data$DISTRICTCODE)],
+                  label = paste(data_matched$nmkab, "-", selected_var, ":", 
+                               if(is_numeric) round(var_values_matched, 2) else var_values_matched),
+                  highlightOptions = highlightOptions(
+                    weight = 5,
+                    color = "#666",
+                    dashArray = "",
+                    fillOpacity = 0.7,
+                    bringToFront = TRUE
+                  )
+                )
+              
+              cat("Added", nrow(data_matched), "polygons to the map\n")
+            } else {
+              # Fallback ke markers jika tidak ada match
+              map <- map %>%
+                addCircleMarkers(
+                  lng = data$Longitude,
+                  lat = data$Latitude,
+                  color = "white",
+                  fillColor = colors,
+                  weight = 1,
+                  radius = 8,
+                  fillOpacity = 0.8,
+                  stroke = TRUE,
+                  popup = popup_content,
+                  label = paste(selected_var, ":", if(is_numeric) round(var_values, 2) else var_values)
+                )
+            }
+          }, error = function(e_poly) {
+            cat("Error loading polygons, using markers:", e_poly$message, "\n")
+            # Fallback ke markers
+            map <- map %>%
+              addCircleMarkers(
+                lng = data$Longitude,
+                lat = data$Latitude,
+                color = "white",
+                fillColor = colors,
+                weight = 1,
+                radius = 8,
+                fillOpacity = 0.8,
+                stroke = TRUE,
+                popup = popup_content,
+                label = paste(selected_var, ":", if(is_numeric) round(var_values, 2) else var_values)
+              )
+          })
+        } else {
+          # Gunakan markers biasa jika shapefile tidak tersedia atau tidak cocok
+          map <- map %>%
+            addCircleMarkers(
+              lng = data$Longitude,
+              lat = data$Latitude,
+              color = "white",
+              fillColor = colors,
+              weight = 1,
+              radius = 8,
+              fillOpacity = 0.8,
+              stroke = TRUE,
+              popup = popup_content,
+              label = paste(selected_var, ":", if(is_numeric) round(var_values, 2) else var_values)
+            )
+        }
         
         # Tambah legend jika diminta
         if (input$show_legend) {
