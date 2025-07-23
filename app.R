@@ -38,7 +38,6 @@ library(cluster)  # For silhouette analysis
 library(dbscan)   # For DBSCAN clustering
 library(factoextra) # For clustering visualization
 library(fpc)      # For clustering validation
-library(jsonlite) # For JSON parsing
 
 # Global variables
 sovi_url <- "https://raw.githubusercontent.com/bmlmcmc/naspaclust/main/data/sovi_data.csv"
@@ -93,10 +92,7 @@ generate_real_indonesia_coordinates <- function(district_codes = NULL) {
     village_url <- "https://raw.githubusercontent.com/coll-j/indonesia-locations-data/main/Village_LongLat_Approx.csv"
     kab_url <- "https://raw.githubusercontent.com/coll-j/indonesia-locations-data/main/kota_kab.csv"
     
-    # Set timeout untuk download
-    options(timeout = 10)
-    
-    # Load data dengan error handling yang lebih baik
+    # Load data
     village_data <- read.csv(village_url, stringsAsFactors = FALSE)
     kab_data <- read.csv(kab_url, stringsAsFactors = FALSE)
     
@@ -190,10 +186,7 @@ generate_real_indonesia_coordinates <- function(district_codes = NULL) {
     
   }, error = function(e) {
     # Error handling - jika download gagal, gunakan fallback
-    cat("⚠️ Error downloading coordinates from GitHub, using fallback method:", e$message, "\n")
-    
-    # Reset timeout options
-    options(timeout = 60)
+    cat("Error downloading coordinates from GitHub, using fallback method:", e$message, "\n")
     
     # Fallback ke sistem lama dengan batas provinsi
     if (!is.null(district_codes) && length(district_codes) > 0) {
@@ -5219,13 +5212,6 @@ Pastikan variabel yang dipilih adalah numerik.")
     cat("Clustering berhasil:", cluster_method, "- Cluster yang terbentuk:", actual_clusters, 
         "- Diharapkan:", expected_clusters, "\n")
     
-    # Notify user about clustering success
-    showNotification(
-      paste("Clustering berhasil!", cluster_method, "menghasilkan", actual_clusters, "cluster"),
-      type = "message",
-      duration = 3
-    )
-    
     # PASTIKAN SELALU MENGGUNAKAN KOORDINAT RIIL DISTRICTCODE
     if (nrow(values$current_data) == nrow(sovi_data)) {
       # Gunakan koordinat riil dari SOVI data yang sudah memiliki koordinat DISTRICTCODE
@@ -5327,7 +5313,7 @@ Pastikan variabel yang dipilih adalah numerik.")
       if (is.null(data) || is.null(clustering) || !"Cluster" %in% names(data)) {
         return(leaflet() %>% 
                  addTiles() %>% 
-                 setView(lng = 118, lat = -2, zoom = 5) %>%
+                 setView(lng = 0, lat = 0, zoom = 2) %>%
                  addControl(
                    html = "<div style='background: #ffecb3; padding: 10px; border-radius: 5px; border-left: 4px solid #ff9800;'>
                          <strong>⚠️ Belum Ada Clustering</strong><br>
@@ -5336,8 +5322,6 @@ Pastikan variabel yang dipilih adalah numerik.")
                    position = "topright"
                  ))
       }
-      
-      cat("📊 Rendering cluster map with", nrow(data), "points and", length(unique(data$Cluster)), "clusters\n")
       
       # Pastikan ada data untuk di-plot
       if (nrow(data) == 0) {
@@ -5386,20 +5370,6 @@ Pastikan variabel yang dipilih adalah numerik.")
       lng_coords <- pmax(94, pmin(142, lng_coords))    # Indonesia longitude bounds
       lat_coords <- pmax(-11, pmin(6, lat_coords))     # Indonesia latitude bounds
       
-      # Additional validation - replace any remaining invalid coordinates
-      invalid_lng <- is.na(lng_coords) | lng_coords < 94 | lng_coords > 142
-      invalid_lat <- is.na(lat_coords) | lat_coords < -11 | lat_coords > 6
-      
-      if (any(invalid_lng)) {
-        lng_coords[invalid_lng] <- runif(sum(invalid_lng), 95, 141)
-        cat("⚠️ Fixed", sum(invalid_lng), "invalid longitude coordinates\n")
-      }
-      
-      if (any(invalid_lat)) {
-        lat_coords[invalid_lat] <- runif(sum(invalid_lat), -8, 5)
-        cat("⚠️ Fixed", sum(invalid_lat), "invalid latitude coordinates\n")
-      }
-      
       # Buat color palette untuk clusters
       n_clusters <- length(unique(data$Cluster))
       cluster_colors <- c("#FF6B6B", "#4ECDC4", "#45B7D1", "#96CEB4", "#FECA57", 
@@ -5418,11 +5388,10 @@ Pastikan variabel yang dipilih adalah numerik.")
         # URL GeoJSON kabupaten Indonesia
         geojson_url <- "https://raw.githubusercontent.com/rizkitirta/GEO-JSON-INDONESIAN-REGION/main/IDN_adm_2_kabkota.json"
         
-        # Set timeout untuk koneksi
-        options(timeout = 10)  # 10 detik timeout
-        
-        # Download GeoJSON dengan method yang lebih robust
-        geojson_data <- jsonlite::fromJSON(geojson_url, simplifyVector = FALSE)
+        # Download GeoJSON (dengan timeout singkat untuk tidak mengganggu performa)
+        geojson_raw <- url(geojson_url)
+        geojson_data <- jsonlite::fromJSON(geojson_raw, simplifyVector = FALSE)
+        close(geojson_raw)
         
         # Tambahkan polygon GeoJSON untuk setiap kabupaten dengan cluster
         features <- geojson_data$features
@@ -5454,62 +5423,35 @@ Pastikan variabel yang dipilih adalah numerik.")
           fill_color <- cluster_colors[cluster_match]
           
           # Tambahkan polygon ke peta
-          if (feature$geometry$type == "Polygon" || feature$geometry$type == "MultiPolygon") {
-            tryCatch({
-              # Handle both Polygon and MultiPolygon
-              if (feature$geometry$type == "Polygon") {
-                coords <- feature$geometry$coordinates[[1]]
-              } else if (feature$geometry$type == "MultiPolygon") {
-                coords <- feature$geometry$coordinates[[1]][[1]]
-              }
-              
-              # Extract dan konversi koordinat ke numeric
-              lng_coords <- as.numeric(sapply(coords, function(x) x[1]))
-              lat_coords <- as.numeric(sapply(coords, function(x) x[2]))
-              
-              # Validasi koordinat - harus numeric dan dalam batas Indonesia
-              if (all(!is.na(lng_coords)) && all(!is.na(lat_coords)) && 
-                  all(lng_coords >= 94 & lng_coords <= 142) && 
-                  all(lat_coords >= -11 & lat_coords <= 6)) {
-                
-                map <- map %>% addPolygons(
-                  lng = lng_coords,
-                  lat = lat_coords,
-                  fillColor = fill_color,
-                  fillOpacity = 0.6,
-                  color = fill_color,
-                  weight = 2,
-                  opacity = 0.8,
-                  popup = paste0(
-                    "<div style='min-width: 200px;'>",
-                    "<strong style='color: ", fill_color, "; font-size: 16px;'>", kabupaten_name, "</strong><br>",
-                    "<strong>Cluster: ", cluster_match, "</strong><br>",
-                    "<hr><small><em>Visualisasi GeoJSON polygon akurat</em></small>",
-                    "</div>"
-                  ),
-                  group = paste("Cluster", cluster_match)
-                )
-              }
-            }, error = function(e) {
-              # Skip polygon jika ada error dalam koordinat
-              cat("⚠️ Skipping polygon", kabupaten_name, "- coordinate error:", e$message, "\n")
-            })
+          if (feature$geometry$type == "Polygon") {
+            coords <- feature$geometry$coordinates[[1]]
+            lng_coords <- sapply(coords, function(x) x[1])
+            lat_coords <- sapply(coords, function(x) x[2])
+            
+            map <- map %>% addPolygons(
+              lng = lng_coords,
+              lat = lat_coords,
+              fillColor = fill_color,
+              fillOpacity = 0.6,
+              color = fill_color,
+              weight = 2,
+              opacity = 0.8,
+              popup = paste0(
+                "<div style='min-width: 200px;'>",
+                "<strong style='color: ", fill_color, "; font-size: 16px;'>", kabupaten_name, "</strong><br>",
+                "<strong>Cluster: ", cluster_match, "</strong><br>",
+                "<hr><small><em>Visualisasi GeoJSON polygon akurat</em></small>",
+                "</div>"
+              ),
+              group = paste("Cluster", cluster_match)
+            )
           }
         }
         
         cat("✅ GeoJSON loaded successfully - showing accurate kabupaten boundaries!\n")
         
-        # Return map with polygons
-        return(map)
-        
       }, error = function(e) {
         cat("⚠️ GeoJSON loading failed, using fallback scatter plot:", e$message, "\n")
-        
-        # Reset timeout options
-        options(timeout = 60)
-        
-        # Add notification about fallback mode
-        cat("🔄 Using fallback scatter plot mode for", nrow(data), "points with", n_clusters, "clusters\n")
         
         # FALLBACK: Plot titik untuk setiap cluster dengan info yang lebih detail
         for (i in 1:n_clusters) {
