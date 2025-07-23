@@ -39,6 +39,9 @@ library(dbscan)   # For DBSCAN clustering
 library(factoextra) # For clustering visualization
 library(fpc)      # For clustering validation
 
+# Load shapefile integration functions
+source("fix_shapefile_function.R")
+
 # Global variables
 sovi_url <- "https://raw.githubusercontent.com/bmlmcmc/naspaclust/main/data/sovi_data.csv"
 distance_url <- "https://raw.githubusercontent.com/bmlmcmc/naspaclust/main/data/distance.csv"
@@ -104,44 +107,6 @@ distance_matrix <- data_list$distance
 # Dataset asli SOVI dan distance matrix TIDAK memiliki koordinat geografis riil
 # Koordinat yang ditampilkan menggunakan SHAPEFILE INDONESIA RESMI
 # File: sovi_administrasi_kabupaten.shp dengan data geografis akurat
-
-# Fungsi untuk load data dari shapefile Indonesia
-load_shapefile_data <- function() {
-  tryCatch({
-    # Load shapefile menggunakan sf package
-    shapefile_data <- st_read("sovi_administrasi_kabupaten.shp", quiet = TRUE)
-    
-    # Convert ke data frame biasa dan ambil centroid untuk koordinat
-    shapefile_df <- st_drop_geometry(shapefile_data)
-    centroids <- st_centroid(shapefile_data$geometry)
-    coords <- st_coordinates(centroids)
-    
-    # Gabungkan data
-    shapefile_df$Longitude <- coords[, 1]
-    shapefile_df$Latitude <- coords[, 2]
-    
-    # Rename kolom untuk konsistensi dengan sistem yang ada
-    names(shapefile_df)[names(shapefile_df) == "DISTRICTCO"] <- "DISTRICTCODE"
-    
-    # Pastikan semua kolom numerik SOVI dalam format yang benar
-    numeric_cols <- c("CHILDREN", "FEMALE", "ELDERLY", "FHEAD", "FAMILYSIZE", 
-                     "NOELECTRIC", "LOWEDU", "GROWTH", "POVERTY", "ILLITERATE", 
-                     "NOTRAINING", "DPRONE", "RENTED", "NOSEWER", "TAPWATER", 
-                     "POPULATION", "DISTRICTCODE")
-    
-    for (col in numeric_cols) {
-      if (col %in% names(shapefile_df)) {
-        shapefile_df[[col]] <- as.numeric(shapefile_df[[col]])
-      }
-    }
-    
-    return(shapefile_df)
-    
-  }, error = function(e) {
-    cat("Error loading shapefile:", e$message, "\n")
-    return(NULL)
-  })
-}
 
 # Fungsi untuk generate koordinat riil Indonesia berdasarkan DISTRICTCODE
 # UPDATED: Sekarang menggunakan data dari shapefile sebagai prioritas utama
@@ -435,6 +400,45 @@ cluster_assignment <- clustering_result$cluster
 sovi_data$Cluster <- as.factor(cluster_assignment)
 
 # =================== HELPER FUNCTIONS ===================
+
+# Fungsi untuk load data dari shapefile Indonesia
+load_shapefile_data <- function() {
+  tryCatch({
+    # Load shapefile menggunakan sf package
+    shapefile_data <- st_read("sovi_administrasi_kabupaten.shp", quiet = TRUE)
+    
+    # Convert ke data frame biasa dan ambil centroid untuk koordinat
+    shapefile_df <- st_drop_geometry(shapefile_data)
+    centroids <- st_centroid(shapefile_data$geometry)
+    coords <- st_coordinates(centroids)
+    
+    # Gabungkan data
+    shapefile_df$Longitude <- coords[, 1]
+    shapefile_df$Latitude <- coords[, 2]
+    
+    # Rename kolom untuk konsistensi dengan sistem yang ada
+    names(shapefile_df)[names(shapefile_df) == "DISTRICTCO"] <- "DISTRICTCODE"
+    
+    # Pastikan semua kolom numerik SOVI dalam format yang benar
+    numeric_cols <- c("CHILDREN", "FEMALE", "ELDERLY", "FHEAD", "FAMILYSIZE", 
+                     "NOELECTRIC", "LOWEDU", "GROWTH", "POVERTY", "ILLITERATE", 
+                     "NOTRAINING", "DPRONE", "RENTED", "NOSEWER", "TAPWATER", 
+                     "POPULATION", "DISTRICTCODE")
+    
+    for (col in numeric_cols) {
+      if (col %in% names(shapefile_df)) {
+        shapefile_df[[col]] <- as.numeric(shapefile_df[[col]])
+      }
+    }
+    
+    return(shapefile_df)
+    
+  }, error = function(e) {
+    cat("Error loading shapefile:", e$message, "\n")
+    return(NULL)
+  })
+}
+
 # Function to create statistical interpretations
 create_interpretation <- function(test_result, test_type) {
   p_value <- test_result$p.value
